@@ -30,7 +30,7 @@
 
 #include "memlib.h"
 #include "mm.h"
-
+#include <stdint.h> // For uint64_t
 /* Do not change the following! */
 
 #ifdef DRIVER
@@ -123,13 +123,20 @@ typedef struct block {
 } block_t;
 
 /* Global variables */
-
+const int tab64[64] = {63, 0,  58, 1,  59, 47, 53, 2,  60, 39, 48, 27, 54,
+                       33, 42, 3,  61, 51, 37, 40, 49, 18, 28, 20, 55, 30,
+                       34, 11, 43, 14, 22, 4,  62, 57, 46, 52, 38, 26, 32,
+                       41, 50, 36, 17, 19, 29, 10, 13, 21, 56, 45, 25, 31,
+                       35, 16, 9,  12, 44, 24, 15, 8,  23, 7,  6,  5};
 static void delete (block_t *del_block);
 static void push(block_t *new_block);
+static int log2(size_t value);
+static int find_sizeClass(size_t size); 
 
 /** @brief Pointer to first block in the heap */
 static block_t *heap_start = NULL;
-static block_t *head = NULL;
+static block_t *segregated_lists[14];
+// static block_t *head = NULL;
 
 /*
  *****************************************************************************
@@ -150,7 +157,62 @@ static block_t *head = NULL;
  *                        BEGIN SHORT HELPER FUNCTIONS
  * ---------------------------------------------------------------------------
  */
+// https://stackoverflow.com/questions/3064926/how-to-write-log-base2-in-c-c
 
+
+// static int log2(size_t value) {
+//     value = (uint64_t)value;
+//     value |= value >> 1;
+//     value |= value >> 2;
+//     value |= value >> 4;
+//     value |= value >> 8;
+//     value |= value >> 16;
+//     value |= value >> 32;
+//     return tab64[((uint64_t)((value - (value >> 1)) * 0x07EDD5E59A4E28C2)) >>
+//                  58];
+// }
+
+static int log2(size_t value) {
+    int logBase2 = 0;
+    value = (uint64_t)value;
+    if (value == 0)
+        return 0; // Logarithm of zero is not defined, return 0 or handle as
+                  // special case
+
+    // Extend the decision tree for 64-bit values
+    if (value & 0xFFFFFFFF00000000) {
+        value >>= 32;
+        logBase2 += 32;
+    }
+    if (value & 0xFFFF0000) {
+        value >>= 16;
+        logBase2 += 16;
+    }
+    if (value & 0xFF00) {
+        value >>= 8;
+        logBase2 += 8;
+    }
+    if (value & 0xF0) {
+        value >>= 4;
+        logBase2 += 4;
+    }
+    if (value & 0xC) {
+        value >>= 2;
+        logBase2 += 2;
+    }
+    if (value & 0x2) {
+        logBase2 += 1;
+    }
+
+    return logBase2;
+}
+
+static int find_sizeClass(size_t size) {
+    int size_class = log2(size);
+    if (size_class >= 13)
+        size_class = 13;
+    return size_class;
+}
 /**
  * @brief Returns the maximum of two integers.
  * @param[in] x
@@ -428,6 +490,7 @@ static block_t *coalesce_block(block_t *block) {
 
     // Prev and Next are both not allocated 
     if (!prevAlloc && !nextAlloc && !prevPro && !nextEpi) {
+        
         delete(prev);
         delete(next);
 
@@ -497,9 +560,13 @@ static block_t *extend_heap(size_t size) {
     write_epilogue(block_next);
 
     // Coalesce in case the previous block was free
-    if (head != NULL)
-        block = coalesce_block(block);
+    // int size_class = find_sizeClass(size);
+    // block_t *head = find_head(block);
     
+    // if (segregated_lists[size_class] != NULL)
+    block = coalesce_block(block);
+
+    dbg_ensures(mm_checkheap(__LINE__));
     return block;
 }
 
@@ -523,12 +590,13 @@ static void split_block(block_t *block, size_t asize) {
     if ((block_size - asize) >= min_block_size) {
         
         block_t *block_next;
+
         write_block(block, asize, true);
 
         block_next = find_next(block);
         write_block(block_next, block_size - asize, false);
         
-        // split a free block, add it to the head
+        // Split the free block, add it to the head depending on the size_class
         push(block_next);
         
     }
@@ -548,15 +616,25 @@ static void split_block(block_t *block, size_t asize) {
  * @return
  */
 static block_t *find_fit(size_t asize) {
-    block_t *temp = head;
-    // first fit
-    while (temp != NULL && get_size(temp) > 0) {
-        if (!(get_alloc(temp)) && (asize <= get_size(temp))) {
-            return temp;
+    
+    // Added size classes
+    int size_class = find_sizeClass(asize);
+
+    // First fit, if no space if found in the size_class. it will go to the next
+    for (int i = size_class; i < 14; i++) {
+        block_t *temp = segregated_lists[i];
+
+        // Loop through the size_class
+        while (temp != NULL && get_size(temp) > 0) {
+            if (!(get_alloc(temp)) && (asize <= get_size(temp))) {
+                return temp;
+            }
+            // dbg_printf("heap %p ", (void *)(temp->content.address.next));
+            temp = temp->content.address.next;
         }
-        // dbg_printf("heap %p ", (void *)(temp->content.address.next));
-        temp = temp->content.address.next;
+
     }
+    
     // dbg_printf("\n");
     return NULL;
 }
@@ -574,6 +652,8 @@ static block_t *find_fit(size_t asize) {
  */
 bool mm_checkheap(int line) {
     block_t *heap_end = mem_heap_hi();
+    block_t *block;
+    int heap_count = 0; // count of free blocks on heap
 
     // check prologue
     if (heap_start != NULL) {
@@ -583,8 +663,6 @@ bool mm_checkheap(int line) {
             return false;
         }
     }
-
-    block_t *block;
 
     for (block = heap_start; get_size(block) > 0; block = find_next(block)) {
         
@@ -614,6 +692,7 @@ bool mm_checkheap(int line) {
 
         // Check if there are two consecutive free blocks
         if (!get_alloc(block)) {
+            heap_count+=1;
             block_t *nextBlock = find_next(block);
             if (nextBlock != NULL && !get_alloc(nextBlock) && get_size(nextBlock) == 0) {
                 dbg_printf("consecutive free block error (called at line %d)\n", line);
@@ -622,15 +701,24 @@ bool mm_checkheap(int line) {
         }
     }
 
-    // block_t *temp = head;
-    // first fit
-    // dbg_printf("Heap ");
-    // while (temp != NULL && get_size(temp) > 0) {
-    //     dbg_printf("%p ", (void *)(temp));
-    //     temp = temp->content.address.next;
-    // }
-    // dbg_printf("\n");
+    // // Visualize the heap
+    // dbg_printf("Heap \n");
+    int seg_count = 0;
+    for (int i = 0; i < 14; i++) {
+        block_t *temp = segregated_lists[i];
+        // dbg_printf("list: %d\n", i);
+        // Loop through the size_class
+        while (temp != NULL && get_size(temp) > 0) {
+            seg_count+=1;
+            // dbg_printf("%p -> ", (void *)(temp));
+            temp = temp->content.address.next;
+        }
+        // dbg_printf("\n");
+    }
+    dbg_printf("\n");
 
+    dbg_printf("segregated list free blocks: %d\n", seg_count);
+    dbg_printf("heap free blocks: %d\n", heap_count);
     // check epilogue
     return true;
 }
@@ -639,29 +727,35 @@ bool mm_checkheap(int line) {
 // https://www.geeksforgeeks.org/introduction-and-insertion-in-a-doubly-linked-list/
 static void push(block_t *new_block) {
     dbg_requires(!get_alloc(new_block) && "Pushed allocated block to LL");
+
+    size_t asize = get_size(new_block);
+    int size_class = find_sizeClass(asize);
+
     // 3. Make next of new node as head and previous as NULL
-    new_block->content.address.next = head;
+    new_block->content.address.next = segregated_lists[size_class];
     new_block->content.address.prev = NULL;
 
     // 4. change prev of head node to new node
-    if (head != NULL)
-        head->content.address.prev = new_block;
+    if (segregated_lists[size_class] != NULL)
+        segregated_lists[size_class]->content.address.prev = new_block;
 
     // 5. move the head to point to the new node
-    head = new_block;
+    segregated_lists[size_class] = new_block;
 }
 
 // Delete a node from the doubly linked list
 // https://www.geeksforgeeks.org/delete-a-node-in-a-doubly-linked-list/
 static void delete(block_t *del_block) {
     // Ensure preconditions are met
+    size_t asize = get_size(del_block);
+    int size_class = find_sizeClass(asize);
+
     dbg_requires(del_block != NULL && "Trying to delete a NULL block");
     dbg_requires(!get_alloc(del_block) && "Trying to delete an allocated block");
-    dbg_requires(head != NULL && "Trying to delete from an empty list");
-    
+
     /* If node to be deleted is head node */
-    if (head == del_block) {
-        head = del_block->content.address.next;
+    if (segregated_lists[size_class] == del_block) {
+        segregated_lists[size_class] = del_block->content.address.next;
     }
 
     /* Change next only if node to be deleted is NOT the first node */
@@ -680,7 +774,6 @@ static void delete(block_t *del_block) {
     del_block->content.address.prev = NULL;
     del_block->content.address.next = NULL;
 }
-
 /**
  * @brief
  *
@@ -712,7 +805,9 @@ bool mm_init(void) {
     heap_start = (block_t *)&(start[1]);
 
     // Reset the explicit head whenever called init
-    head = NULL;
+    for (int i = 0; i < 14; i++) {
+        segregated_lists[i] = NULL;
+    }
 
     // Extend the empty heap with a free block of chunksize bytes
     if (extend_heap(chunksize) == NULL) {
@@ -771,16 +866,24 @@ void *malloc(size_t size) {
             return bp;
         }
     }
-    // Couldn't find a place to allocate, so it may need to coalesce after extending the heap
-    // Remove the node after extending
-    if (head != NULL)
-        delete(block);
+
 
     // The block should be marked as free
     dbg_assert(!get_alloc(block));
 
     // Mark block as allocated
     size_t block_size = get_size(block);
+
+    // Couldn't find a place to allocate, so it may need to coalesce after
+    // extending the heap Remove the node after extending size_t bsize =
+    // get_size(block);
+    int size_class = find_sizeClass(block_size);
+    if (segregated_lists[size_class] != NULL) {
+        // dbg_printf("size_class: %d\n", size_class);
+        // dbg_printf("head: %p\n", (void *)segregated_lists[size_class]);
+        delete (block);
+    }
+
     write_block(block, block_size, true);
 
     // Try to split the block if too large
