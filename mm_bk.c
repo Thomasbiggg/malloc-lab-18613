@@ -106,7 +106,7 @@ static const size_t chunksize = (1 << 12);
 static const word_t alloc_mask = 0x1;
 
 /**
- * Mask to ckeck whether previous is allocated or not
+ * Mask to ckeck whether previous is allocated or not 
  */
 static const word_t pre_alloc_mask = 0x2;
 
@@ -126,10 +126,9 @@ typedef struct block {
     union {
         char payload[0]; // Used when the block is allocated to store data.
         struct {
-            struct block
-                *next; // Pointer to the previous block in the free list.
+            struct block *next; // Pointer to the previous block in the free list.
             struct block *prev; // Pointer to the next block in the free list.
-        } address; // Used when the block is free to link free blocks.
+        } address;  // Used when the block is free to link free blocks.
     } content;
 } block_t;
 
@@ -143,7 +142,7 @@ const int tab64[64] = {63, 0,  58, 1,  59, 47, 53, 2,  60, 39, 48, 27, 54,
 static void delete (block_t *del_block);
 static void push(block_t *new_block);
 static int log2(size_t value);
-static int find_sizeClass(size_t size);
+static int find_sizeClass(size_t size); 
 static word_t write_mini(word_t block);
 static void update_next_block_bits(block_t *block);
 static bool get_prev_mini(block_t *block);
@@ -178,6 +177,7 @@ static block_t *mini_list = NULL;
  */
 // https://stackoverflow.com/questions/3064926/how-to-write-log-base2-in-c-c
 
+
 static int log2(size_t value) {
     value = (uint64_t)value;
     value |= value >> 1;
@@ -199,7 +199,7 @@ static int find_sizeClass(size_t size) {
         size_class -= 4;
     else if (size_class >= 17)
         size_class = 13;
-
+    
     return size_class;
 }
 /**
@@ -235,7 +235,7 @@ static size_t round_up(size_t size, size_t n) {
  * @return The packed value
  */
 static word_t pack(size_t size, bool alloc, bool prev, bool prev_mini) {
-    word_t word = size & size_mask;
+    word_t word = size;
     if (alloc) {
         word |= alloc_mask;
     }
@@ -371,8 +371,7 @@ static bool extract_pre_alloc(word_t word) {
 }
 
 /**
- * @brief Returns the allocation status of its previous block, based on its
- * header.
+ * @brief Returns the allocation status of its previous block, based on its header.
  * @param[in] block
  * @return The allocation status of the previous block
  */
@@ -418,8 +417,7 @@ static void write_epilogue(block_t *block) {
  * @param[in] size The size of the new block
  * @param[in] alloc The allocation status of the new block
  */
-static void write_block(block_t *block, size_t size, bool alloc, bool prev,
-                        bool prev_mini) {
+static void write_block(block_t *block, size_t size, bool alloc, bool prev, bool prev_mini) {
     dbg_requires(block != NULL);
     dbg_requires(size > 0);
 
@@ -427,12 +425,12 @@ static void write_block(block_t *block, size_t size, bool alloc, bool prev,
 
     // Only free block have footer
     if (size > min_block_size) {
+        // update_next_block_bits(block);
         if (!alloc) {
             word_t *footerp = header_to_footer(block);
-            // dbg_printf("Size %ld\n", size);
             *footerp = pack(size, alloc, prev, prev_mini);
-        }
-    }
+        }    
+    } 
 }
 
 static word_t write_mini(word_t ptr) {
@@ -484,11 +482,11 @@ static word_t *find_prev_footer(block_t *block) {
  */
 static block_t *find_prev(block_t *block) {
     dbg_requires(block != NULL);
-
+    
     if (get_prev_mini(block)) {
         return (block_t *)((char *)block - dsize);
     }
-
+    
     word_t *footerp = find_prev_footer(block);
 
     // Return NULL if called on first block in the heap
@@ -504,7 +502,7 @@ static void update_next_block_bits(block_t *block) {
     block_t *next_block = find_next(block);
     if (next_block != NULL) {
         size_t next_next_size = get_size(next_block);
-        if (next_next_size != 0) {
+        if (next_next_size != 0 && get_alloc(next_block)){
             if (get_size(block) == 16) {
                 write_block(next_block, next_next_size, true, get_alloc(block),
                             true);
@@ -512,7 +510,7 @@ static void update_next_block_bits(block_t *block) {
                 write_block(next_block, next_next_size, true, get_alloc(block),
                             false);
             }
-        }
+        } 
     }
 }
 /*
@@ -540,6 +538,7 @@ static block_t *coalesce_block(block_t *block) {
     dbg_requires(block != NULL && "Trying to coalesce nothing");
     dbg_requires(curSize != 0 && "Trying to coalesce prologue or epilogue");
 
+
     block_t *prev;
     size_t prevSize = 0;
     bool prevAlloc = get_pre_alloc(block);
@@ -560,13 +559,13 @@ static block_t *coalesce_block(block_t *block) {
     }
     bool nextEpi = nextSize == 0; // true if next is epilogue
 
-    // Prev and Next are both not allocated
+    // Prev and Next are both not allocated 
     if (!prevAlloc && !nextAlloc && !prevPro && !nextEpi) {
         bool prev_alloc = get_pre_alloc(prev);
         bool prev_mini = get_prev_mini(prev);
 
-        delete (prev);
-        delete (next);
+        delete(prev);
+        delete(next);
 
         curSize += prevSize + nextSize;
 
@@ -577,8 +576,8 @@ static block_t *coalesce_block(block_t *block) {
     }
     // Next is not allocated
     else if (!nextAlloc) {
-
-        delete (next);
+        
+        delete(next);
         curSize += nextSize;
         write_block(block, curSize, false, prevAlloc, false);
 
@@ -588,7 +587,7 @@ static block_t *coalesce_block(block_t *block) {
         bool prev_alloc = get_pre_alloc(prev);
         bool prev_mini = get_prev_mini(prev);
 
-        delete (prev);
+        delete(prev);
         prevSize += curSize;
         write_block(prev, prevSize, false, prev_alloc, prev_mini);
 
@@ -598,6 +597,7 @@ static block_t *coalesce_block(block_t *block) {
     push(block);
 
     update_next_block_bits(block);
+
 
     return block;
 }
@@ -631,8 +631,7 @@ static block_t *extend_heap(size_t size) {
 
     // Initialize free block header/footer
     block_t *block = payload_to_header(bp);
-
-    // The first time extend heap
+    
     block_t *prev = find_prev(block);
     if (prev) {
         if (get_size(prev) == min_block_size) {
@@ -648,7 +647,9 @@ static block_t *extend_heap(size_t size) {
                 write_block(block, size, false, false, false);
             }
         }
-    } else {
+    }
+    // The first time extend heap
+    else {
         write_block(block, size, false, true, false);
     }
 
@@ -658,7 +659,7 @@ static block_t *extend_heap(size_t size) {
 
     // Coalesce in case the previous block was free
     // int size_class = find_sizeClass(size);
-
+    
     // if (segregated_lists[size_class] != NULL)
     block = coalesce_block(block);
 
@@ -687,8 +688,7 @@ static void split_block(block_t *block, size_t asize) {
 
         block_t *block_next;
 
-        write_block(block, asize, true, get_pre_alloc(block),
-                    get_prev_mini(block));
+        write_block(block, asize, true, get_pre_alloc(block), get_prev_mini(block));
 
         block_next = find_next(block);
 
@@ -700,11 +700,10 @@ static void split_block(block_t *block, size_t asize) {
 
         push(block_next);
 
-        // After splitting, set the allocate bit of next block of split block to
-        // false
-        update_next_block_bits(block_next);
+        // After splitting, set the prev allocate bit of next block of split block to false
+        update_next_block_bits(block);
     }
-
+    
     dbg_ensures(get_alloc(block));
 }
 
@@ -720,12 +719,12 @@ static void split_block(block_t *block, size_t asize) {
  * @return
  */
 // static block_t *find_fit(size_t asize) {
-
+    
 //     // Added size classes
 //     int size_class = find_sizeClass(asize);
 
-//     // First fit, if no space if found in the size_class. it will go to the
-//     next for (int i = size_class; i < 14; i++) {
+//     // First fit, if no space if found in the size_class. it will go to the next
+//     for (int i = size_class; i < 14; i++) {
 //         block_t *temp = segregated_lists[i];
 
 //         // Loop through the size_class
@@ -738,16 +737,15 @@ static void split_block(block_t *block, size_t asize) {
 //         }
 
 //     }
-
+    
 //     // dbg_printf("\n");
 //     return NULL;
 // }
 static block_t *find_fit(size_t asize) {
     int size_class = find_sizeClass(asize);
-
     if (asize == min_block_size) {
         block_t *temp = mini_list;
-        while (temp != NULL) {
+        while (temp != NULL ) {
             if (!(get_alloc(temp)) && asize <= get_size(temp)) {
                 return temp;
             }
@@ -764,11 +762,12 @@ static block_t *find_fit(size_t asize) {
             // dbg_printf("%p -> ", (void *)temp);
 
             if (!(get_alloc(temp)) && (asize <= get_size(temp))) {
-                if (best_fit == NULL || get_size(temp) < get_size(best_fit)) {
+                if (best_fit == NULL ||
+                    get_size(temp) < get_size(best_fit)) {
                     best_fit = temp;
                     if (get_size(temp) == asize)
                         break; // Perfect fit found, no need to search
-                               // further
+                                // further
                 }
             }
             temp = temp->content.address.next;
@@ -777,6 +776,8 @@ static block_t *find_fit(size_t asize) {
         if (best_fit != NULL)
             return best_fit;
     }
+    
+    
 
     return NULL;
 }
@@ -800,15 +801,14 @@ bool mm_checkheap(int line) {
     // check prologue
     if (heap_start != NULL) {
         block_t *prologue = (block_t *)((size_t *)heap_start - 1);
-        if (prologue == NULL || !get_alloc(prologue) ||
-            get_size(prologue) != 0) {
+        if (prologue == NULL || !get_alloc(prologue) || get_size(prologue) != 0) {
             dbg_printf("Prologue error (called at line %d)\n", line);
             return false;
         }
     }
 
     for (block = heap_start; get_size(block) > 0; block = find_next(block)) {
-
+        
         // Check alignment
         if ((size_t)header_to_payload(block) % 16 != 0) {
             dbg_printf("Alignment error %p (called at line %d)\n",
@@ -827,11 +827,9 @@ bool mm_checkheap(int line) {
         bool alloc = get_alloc(block);
         word_t *footerp = header_to_footer(block);
 
-        if (size > 16 && !alloc) {
-            if (alloc != extract_alloc(*footerp) ||
-                size != extract_size(*footerp)) {
-                dbg_printf("Header or Footer error (called at line %d)\n",
-                           line);
+        if (size > 16 && !alloc){
+            if (alloc != extract_alloc(*footerp) || size != extract_size(*footerp)) {
+                dbg_printf("Header or Footer error (called at line %d)\n", line);
                 return false;
             }
         }
@@ -840,10 +838,8 @@ bool mm_checkheap(int line) {
         if (!get_alloc(block)) {
             // heap_count+=1;
             block_t *nextBlock = find_next(block);
-            if (nextBlock != NULL && !get_alloc(nextBlock) &&
-                get_size(nextBlock) == 0) {
-                dbg_printf("consecutive free block error (called at line %d)\n",
-                           line);
+            if (nextBlock != NULL && !get_alloc(nextBlock) && get_size(nextBlock) == 0) {
+                dbg_printf("consecutive free block error (called at line %d)\n", line);
                 return false;
             }
         }
@@ -868,11 +864,10 @@ bool mm_checkheap(int line) {
                     dbg_printf("block not in right bin size %d)", line);
                     return false;
                 }
-
+                
                 if (temp->content.address.prev) {
                     // Check for pointer consistent
-                    if (temp->content.address.prev->content.address.next !=
-                        temp) {
+                    if (temp->content.address.prev->content.address.next != temp) {
                         dbg_printf("next/prev pointer not consistent (called "
                                    "at line %d)",
                                    line);
@@ -917,6 +912,7 @@ bool mm_checkheap(int line) {
                         return false;
                     }
                 }
+
 
                 temp = temp->content.address.next;
             }
@@ -973,6 +969,7 @@ static void push(block_t *new_block) {
     int size_class = find_sizeClass(asize);
 
     if (asize > dsize) {
+        // 3. Make next of new node as head and previous as NULL
         block_t *temp = segregated_lists[size_class];
         dbg_printf("list %d before push \n", size_class);
         while (temp != NULL && get_size(temp) > 0) {
@@ -981,16 +978,16 @@ static void push(block_t *new_block) {
         }
         dbg_printf("\n");
 
-        // 3. Make next of new node as head and previous as NULL
-        new_block->content.address.next = segregated_lists[size_class];
-        new_block->content.address.prev = NULL;
-
-        // 4. change prev of head node to new node
-        if (segregated_lists[size_class] != NULL)
+        if (segregated_lists[size_class]) {
+            new_block->content.address.next = segregated_lists[size_class];
+            new_block->content.address.prev = NULL;
             segregated_lists[size_class]->content.address.prev = new_block;
 
-        // 5. move the head to point to the new node
-        segregated_lists[size_class] = new_block;
+        } else {
+            segregated_lists[size_class] = new_block;
+            new_block->content.address.next = NULL;
+            new_block->content.address.prev = NULL;
+        }
 
         temp = segregated_lists[size_class];
         dbg_printf("list %d after push \n", size_class);
@@ -999,24 +996,25 @@ static void push(block_t *new_block) {
             temp = temp->content.address.next;
         }
         dbg_printf("\n");
-    
+
     } else {
         // 3. Make next of new node as head
-        // if (!segregated_lists[size_class]) {
+        // if (!segregated_lists[size_class]){
         //     segregated_lists[size_class] = new_block;
+        //     new_block->content.address.prev = NULL;
         //     new_block->content.address.next = NULL;
         // } else {
         //     new_block->content.address.next = segregated_lists[size_class];
         //     segregated_lists[size_class] = new_block;
         // }
 
-        block_t *temp = mini_list;
-        dbg_printf("mini list before push \n");
-        while (temp != NULL && get_size(temp) > 0) {
-            dbg_printf("%p -> ", (void *)temp);
-            temp = temp->content.address.next;
-        }
-        dbg_printf("\n");
+        // block_t *temp = mini_list;
+        // dbg_printf("mini list before push \n");
+        // while (temp != NULL && get_size(temp) > 0) {
+        //     dbg_printf("%p -> ", (void *)temp);
+        //     temp = temp->content.address.next;
+        // }
+        // dbg_printf("\n");
 
         if (!mini_list) {
             mini_list = new_block;
@@ -1029,35 +1027,38 @@ static void push(block_t *new_block) {
             mini_list = new_block;
         }
 
-        temp = mini_list;
-        dbg_printf("mini list after push\n");
-        while (temp != NULL && get_size(temp) > 0) {
-            dbg_printf("%p -> ", (void *)temp);
-            temp = temp->content.address.next;
-        }
-        dbg_printf("\n");
-    }
-}
-
-// Delete a node from the doubly linked list
-// https://www.geeksforgeeks.org/delete-a-node-in-a-doubly-linked-list/
-static void delete (block_t *del_block) {
-    // Ensure preconditions are met
-    size_t asize = get_size(del_block);
-    int size_class = find_sizeClass(asize);
-
-    dbg_requires(del_block != NULL && "Trying to delete a NULL block");
-    dbg_requires(!get_alloc(del_block) &&
-                 "Trying to delete an allocated block");
-
-    if (asize > dsize) {
-        // block_t *temp = segregated_lists[size_class];
-        // dbg_printf("list %d before delete \n", size_class);
+        // temp = mini_list;
+        // dbg_printf("mini list after push\n");
         // while (temp != NULL && get_size(temp) > 0) {
         //     dbg_printf("%p -> ", (void *)temp);
         //     temp = temp->content.address.next;
         // }
         // dbg_printf("\n");
+    }
+
+
+}
+
+// Delete a node from the doubly linked list
+// https://www.geeksforgeeks.org/delete-a-node-in-a-doubly-linked-list/
+static void delete(block_t *del_block) {
+    // Ensure preconditions are met
+    size_t asize = get_size(del_block);
+    int size_class = find_sizeClass(asize);
+
+    dbg_requires(del_block != NULL && "Trying to delete a NULL block");
+    dbg_requires(!get_alloc(del_block) && "Trying to delete an allocated block");
+
+
+    if (asize > dsize) {
+
+        block_t *temp = segregated_lists[size_class];
+        dbg_printf("list %d before delete \n", size_class);
+        while (temp != NULL && get_size(temp) > 0) {
+            dbg_printf("%p -> ", (void *)temp);
+            temp = temp->content.address.next;
+        }
+        dbg_printf("\n");
 
         /* If node to be deleted is head node */
         if (segregated_lists[size_class] == del_block) {
@@ -1080,18 +1081,26 @@ static void delete (block_t *del_block) {
         del_block->content.address.prev = NULL;
         del_block->content.address.next = NULL;
 
-            // temp = segregated_lists[size_class];
-            // dbg_printf("list %d  after delete \n", size_class);
-            // while (temp != NULL && get_size(temp) > 0) {
-            //     dbg_printf("%p -> ", (void *)temp);
-            //     temp = temp->content.address.next;
-            // }
-            // dbg_printf("\n");
+        // temp = segregated_lists[size_class];
+        // dbg_printf("list %d  after delete \n", size_class);
+        // while (temp != NULL && get_size(temp) > 0) {
+        //     dbg_printf("%p -> ", (void *)temp);
+        //     temp = temp->content.address.next;
+        // }
+        // dbg_printf("\n");
 
     } else {
-        // Mini block (block->header = prev, block->content.address.prev = next)
-        // block_t *nextBlock = del_block->content.address.next;
+        
+        block_t *temp = mini_list;
+        dbg_printf("mini list before delete\n");
+        while (temp != NULL && get_size(temp) > 0) {
+            dbg_printf("%p -> ", (void *)temp);
+            temp = temp->content.address.next;
+        }
+        dbg_printf("\n");
 
+        block_t *nextBlock = del_block->content.address.next;
+        
         // if (segregated_lists[size_class] == del_block) {
         //     if (nextBlock != NULL) {
         //         segregated_lists[size_class] = nextBlock;
@@ -1105,18 +1114,8 @@ static void delete (block_t *del_block) {
         //     }
         //     temp->content.address.next = del_block->content.address.next;
         // }
-
+        // del_block->content.address.prev = NULL;
         // del_block->content.address.next = NULL;
-
-        // block_t *temp = mini_list;
-        // dbg_printf("mini list before delete\n");
-        // while (temp != NULL && get_size(temp) > 0) {
-        //     dbg_printf("%p -> ", (void *)temp);
-        //     temp = temp->content.address.next;
-        // }
-        // dbg_printf("\n");
-
-        block_t *nextBlock = del_block->content.address.next;
 
         if (mini_list == del_block) {
             if (nextBlock) {
@@ -1131,16 +1130,18 @@ static void delete (block_t *del_block) {
             }
             temp->content.address.next = del_block->content.address.next;
         }
+        
         del_block->content.address.next = NULL;
 
-        // temp = mini_list;
-        // dbg_printf("mini list after delete\n");
-        // while (temp != NULL && get_size(temp) > 0) {
-        //     dbg_printf("%p -> ", (void *)temp);
-        //     temp = temp->content.address.next;
-        // }
-        // dbg_printf("\n");
+        temp = mini_list;
+        dbg_printf("mini list after delete\n");
+        while (temp != NULL && get_size(temp) > 0) {
+            dbg_printf("%p -> ", (void *)temp);
+            temp = temp->content.address.next;
+        }
+        dbg_printf("\n");
     }
+
 
 }
 /**
@@ -1177,9 +1178,9 @@ bool mm_init(void) {
     for (int i = 0; i < SEGSIZE; i++) {
         segregated_lists[i] = NULL;
     }
-
+    
     mini_list = NULL;
-
+    
     // Extend the empty heap with a free block of chunksize bytes
     if (extend_heap(chunksize) == NULL) {
         return false;
@@ -1227,6 +1228,8 @@ void *malloc(size_t size) {
     // Search the free list for a fit
     block = find_fit(asize);
 
+    // dbg_printf("block found %p\n", (void *)block);
+
     // If no fit is found, request more memory, and then and place the block
     if (block == NULL) {
         // Always request at least chunksize
@@ -1238,36 +1241,40 @@ void *malloc(size_t size) {
         }
     }
 
+
     // The block should be marked as free
     dbg_assert(!get_alloc(block));
 
     // Mark block as allocated
     size_t block_size = get_size(block);
 
-    // Couldn't find a place to allocate, so it may need to coalesce after
-    // extend need to check whether the seg list is NULL, can not delete from a
+    // Couldn't find a place to allocate, so it may need to coalesce after extend
+    // need to check whether the seg list is NULL, can not delete from a 
     if (block_size == min_block_size) {
-        if (mini_list) {
-            delete(block);
+        if (mini_list){
+            // dbg_printf("delete mini when malloc\n");
+            delete (block);
         }
     } else {
         int size_class = find_sizeClass(block_size);
         if (segregated_lists[size_class] != NULL) {
             // dbg_printf("size_class: %d\n", size_class);
             // dbg_printf("head: %p\n", (void *)segregated_lists[size_class]);
+            // dbg_printf("delete normal when malloc\n");
             delete (block);
         }
     }
+    
 
-    write_block(block, block_size, true, get_pre_alloc(block),
-                get_prev_mini(block));
+    write_block(block, block_size, true, get_pre_alloc(block), get_prev_mini(block));
 
     // Try to split the block if too large
     split_block(block, asize);
 
+    // If the next_block is not free, it means that no split happens, set the prev_alloc of next block to true 
     if (get_alloc(find_next(block)))
         update_next_block_bits(block);
-
+    
     bp = header_to_payload(block);
 
     dbg_ensures(mm_checkheap(__LINE__));
@@ -1297,15 +1304,14 @@ void free(void *bp) {
     // The block should be marked as allocated
     dbg_assert(get_alloc(block));
 
-    // Mark the block as free, first set the pre_alloc to true, if the prev if
-    // free, modify it on coalesce_block
+    // Mark the block as free, first set the pre_alloc to true, if the prev if free, modify it on coalesce_block
     write_block(block, size, false, get_pre_alloc(block), get_prev_mini(block));
 
     // Try to coalesce the block with its neighbors
     coalesce_block(block);
 
-    // The current block will be freed, so set the pre_alloc of the next block
-    // to false update_next_block_bits(block);
+    // The current block will be freed, so set the pre_alloc of the next block to false
+    // update_next_block_bits(block);
 
     dbg_ensures(mm_checkheap(__LINE__));
 }
@@ -1410,4 +1416,3 @@ void *calloc(size_t elements, size_t size) {
  *                                                                           *
  *****************************************************************************
  */
-
