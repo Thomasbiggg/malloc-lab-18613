@@ -16,7 +16,7 @@
  *
  *************************************************************************
  *
- * @author Your Name <andrewid@andrew.cmu.edu>
+ * @author Yungchi (Thomas) Kuo <yungchik@andrew.cmu.edu>
  */
 
 #include <assert.h>
@@ -135,6 +135,10 @@ typedef struct block {
 
 /* Global variables */
 #define SEGSIZE 14
+const int first_bin_size_boundary = 4;
+const int second_bin_size_boundary = 17;
+const int last_class = 17;
+
 const int tab64[64] = {63, 0,  58, 1,  59, 47, 53, 2,  60, 39, 48, 27, 54,
                        33, 42, 3,  61, 51, 37, 40, 49, 18, 28, 20, 55, 30,
                        34, 11, 43, 14, 22, 4,  62, 57, 46, 52, 38, 26, 32,
@@ -144,18 +148,15 @@ static void delete (block_t *del_block);
 static void push(block_t *new_block);
 static int log2(size_t value);
 static int find_sizeClass(size_t size);
-static word_t write_mini(word_t block);
 static void update_next_block_bits(block_t *block);
 static bool get_prev_mini(block_t *block);
 static bool get_pre_alloc(block_t *block);
 static bool extract_pre_alloc(word_t word);
-static bool extract_mini(word_t word);
 
 /** @brief Pointer to first block in the heap */
 static block_t *heap_start = NULL;
 static block_t *segregated_lists[SEGSIZE];
 static block_t *mini_list = NULL;
-// static block_t *head = NULL;
 
 /*
  *****************************************************************************
@@ -176,8 +177,13 @@ static block_t *mini_list = NULL;
  *                        BEGIN SHORT HELPER FUNCTIONS
  * ---------------------------------------------------------------------------
  */
-// https://stackoverflow.com/questions/3064926/how-to-write-log-base2-in-c-c
 
+/**
+ * @brief log2.
+ * source: https://stackoverflow.com/questions/3064926/how-to-write-log-base2-in-c-c
+ * @param[in] The size of the block
+ * @return The value after log base 2.
+ */
 static int log2(size_t value) {
     value = (uint64_t)value;
     value |= value >> 1;
@@ -190,15 +196,21 @@ static int log2(size_t value) {
                  58];
 }
 
+/**
+ * @brief Returns bin class of the segregated list.
+ * @param[in] The size of the block
+ * @return The int bin size class.
+ */
 static int find_sizeClass(size_t size) {
     int size_class = log2(size);
 
-    if (size_class <= 4)
+    if (size_class <= first_bin_size_boundary)
         size_class = 1;
-    else if (size_class < 17 && size_class > 4)
-        size_class -= 4;
-    else if (size_class >= 17)
-        size_class = 13;
+    else if (size_class < second_bin_size_boundary &&
+             size_class > first_bin_size_boundary)
+        size_class -= first_bin_size_boundary;
+    else if (size_class >= second_bin_size_boundary)
+        size_class = last_class;
 
     return size_class;
 }
@@ -232,6 +244,8 @@ static size_t round_up(size_t size, size_t n) {
  *
  * @param[in] size The size of the block being represented
  * @param[in] alloc True if the block is allocated
+ * @param[in] pre_alloc True if the previous block is allocated
+ * @param[in] prev_mini True if the previous block is mini block
  * @return The packed value
  */
 static word_t pack(size_t size, bool alloc, bool prev, bool prev_mini) {
@@ -246,19 +260,6 @@ static word_t pack(size_t size, bool alloc, bool prev, bool prev_mini) {
         word |= mini_mask;
     }
     return word;
-}
-
-static word_t pack_bits(word_t addr, bool alloc, bool prev, bool prev_mini) {
-    if (alloc) {
-        addr |= alloc_mask;
-    }
-    if (prev) {
-        addr |= pre_alloc_mask;
-    }
-    if (prev_mini) {
-        addr |= mini_mask;
-    }
-    return addr;
 }
 
 /**
@@ -494,7 +495,15 @@ static block_t *find_prev(block_t *block) {
     return footer_to_header(footerp);
 }
 
-// update the next_block after split or free or coalesce
+/**
+ * @brief
+ *
+ * After coalesce or extend heap, change the metadata of the next block
+ * 
+ *
+ * @param[in] block
+ * @return
+ */
 static void update_next_block_bits(block_t *block) {
     block_t *next_block = find_next(block);
     if (next_block != NULL) {
@@ -507,7 +516,9 @@ static void update_next_block_bits(block_t *block) {
                 write_block(next_block, next_next_size, true, get_alloc(block),
                             false);
             }
-        } else if (next_next_size == 0 && get_alloc(next_block)) {
+        }
+        // If it is the last element on the heap, write the epilogue 
+        else if (next_next_size == 0 && get_alloc(next_block)) {
             if (get_size(block) == 16) {
                 write_block(next_block, 0, true, get_alloc(block), true);
             } else {
@@ -527,13 +538,11 @@ static void update_next_block_bits(block_t *block) {
 /**
  * @brief
  *
- * <What does this function do?>
- * <What are the function's arguments?>
- * <What is the function's return value?>
- * <Are there any preconditions or postconditions?>
+ * Check if the previous block / next block on the heap is free, coalesce the blocks to form a 
+ * large free block
  *
  * @param[in] block
- * @return
+ * @return free block
  */
 static block_t *coalesce_block(block_t *block) {
     size_t curSize = get_size(block);
@@ -606,17 +615,15 @@ static block_t *coalesce_block(block_t *block) {
 /**
  * @brief
  *
- * <What does this function do?>
- * <What are the function's arguments?>
- * <What is the function's return value?>
- * <Are there any preconditions or postconditions?>
+ * If could find a enough large free block on the heap, it will extend the heap by appending
+ * a free block on the heap
  *
  * @param[in] size
- * @return
+ * @return the appended free block
  */
 static block_t *extend_heap(size_t size) {
     void *bp;
-    block_t *brk_res = payload_to_header(mem_sbrk(0));
+    block_t *epi = payload_to_header(mem_sbrk(0));
     // Allocate an even number of words to maintain alignment
     size = round_up(size, dsize);
     if ((bp = mem_sbrk((intptr_t)size)) == (void *)-1) {
@@ -626,30 +633,8 @@ static block_t *extend_heap(size_t size) {
     // Initialize free block header/footer
     block_t *block = payload_to_header(bp);
     
-    write_block(block, size, false, get_pre_alloc(brk_res),
-                get_prev_mini(brk_res));
-    // The first time extend heap    
-    // block_t *prev = NULL;
-    // for (prev = heap_start; get_size(block) > 0; block = find_next(block)) {
-    //     prev = block;
-    // }
-    // if (prev) {
-    //     if (get_size(prev) == min_block_size) {
-    //         if (get_alloc(prev)) {
-    //             write_block(block, size, false, true, true);
-    //         } else {
-    //             write_block(block, size, false, false, true);
-    //         }
-    //     } else {
-    //         if (get_alloc(prev)) {
-    //             write_block(block, size, false, true, false);
-    //         } else {
-    //             write_block(block, size, false, false, false);
-    //         }
-    //     }
-    // } else {
-    //     write_block(block, size, false, true, false);
-    // }
+    write_block(block, size, false, get_pre_alloc(epi),
+                get_prev_mini(epi));
 
     // Create new epilogue header
     block_t *block_next = find_next(block);
@@ -665,17 +650,13 @@ static block_t *extend_heap(size_t size) {
 /**
  * @brief
  *
- * <What does this function do?>
- * <What are the function's arguments?>
- * <What is the function's return value?>
- * <Are there any preconditions or postconditions?>
+ * If the block is too large, it will split a new block to mitigate internal fragmentation
  *
  * @param[in] block
  * @param[in] asize
  */
 static void split_block(block_t *block, size_t asize) {
     dbg_requires(get_alloc(block));
-    /* TODO: Can you write a precondition about the value of asize? */
 
     size_t block_size = get_size(block);
     size_t splitBlockSize = (block_size - asize);
@@ -706,41 +687,16 @@ static void split_block(block_t *block, size_t asize) {
 
 /**
  * @brief
- *
- * <What does this function do?>
- * <What are the function's arguments?>
- * <What is the function's return value?>
- * <Are there any preconditions or postconditions?>
- *
+ * 
+ *  Loop through the mini list or segregated list to find the BEST fit
+ * 
  * @param[in] asize
- * @return
+ * @return the best block found
  */
-// static block_t *find_fit(size_t asize) {
-
-//     // Added size classes
-//     int size_class = find_sizeClass(asize);
-
-//     // First fit, if no space if found in the size_class. it will go to the
-//     next for (int i = size_class; i < 14; i++) {
-//         block_t *temp = segregated_lists[i];
-
-//         // Loop through the size_class
-//         while (temp != NULL && get_size(temp) > 0) {
-//             if (!(get_alloc(temp)) && (asize <= get_size(temp))) {
-//                 return temp;
-//             }
-//             // dbg_printf("heap %p ", (void *)(temp->content.address.next));
-//             temp = temp->content.address.next;
-//         }
-
-//     }
-
-//     // dbg_printf("\n");
-//     return NULL;
-// }
 static block_t *find_fit(size_t asize) {
     int size_class = find_sizeClass(asize);
 
+    // If it is a mini, loop through the mini list
     if (asize == min_block_size) {
         block_t *temp = mini_list;
         while (temp != NULL) {
@@ -763,8 +719,7 @@ static block_t *find_fit(size_t asize) {
                 if (best_fit == NULL || get_size(temp) < get_size(best_fit)) {
                     best_fit = temp;
                     if (get_size(temp) == asize)
-                        break; // Perfect fit found, no need to search
-                               // further
+                        break; // Perfect fit found, no need to search further
                 }
             }
             temp = temp->content.address.next;
@@ -780,23 +735,21 @@ static block_t *find_fit(size_t asize) {
 /**
  * @brief
  *
- * <What does this function do?>
- * <What are the function's arguments?>
- * <What is the function's return value?>
- * <Are there any preconditions or postconditions?>
- *
+ * Check whether the malloc and free is conducted correctly
+ * Based on the metadata stored in the heap / seg list / mini list
+ * 
  * @param[in] line
  * @return
  */
 bool mm_checkheap(int line) {
     block_t *heap_end = mem_heap_hi();
     block_t *block;
-    // int heap_count = 0; // count of free blocks on heap
+    int heap_count = 0; // count of free blocks on heap
 
     for (block = heap_start; get_size(block) > 0; block = find_next(block)) {
 
         // Check alignment
-        if ((size_t)header_to_payload(block) % 16 != 0) {
+        if ((size_t)header_to_payload(block) % dsize != 0) {
             dbg_printf("Alignment error %p (called at line %d)\n",
                        (void *)block, line);
             return false;
@@ -824,7 +777,7 @@ bool mm_checkheap(int line) {
 
         // Check if there are two consecutive free blocks
         if (!get_alloc(block)) {
-            // heap_count+=1;
+            heap_count+=1;
             block_t *nextBlock = find_next(block);
             if (nextBlock != NULL && !get_alloc(nextBlock) &&
                 get_size(nextBlock) == 0) {
@@ -838,16 +791,16 @@ bool mm_checkheap(int line) {
 
     // // Visualize the heap
     // dbg_printf("Heap \n");
-    // int seg_count = 0;
+    int seg_count = 0;
     for (int i = 0; i < SEGSIZE; i++) {
         block_t *temp = segregated_lists[i];
         if (!temp) {
             continue;
         }
         // dbg_printf("list: %d\n", i);
-        if (i != 4) {
+        if (i != first_bin_size_boundary) {
             while (temp != NULL && get_size(temp) > 0) {
-                // seg_count += 1;
+                seg_count += 1;
                 // dbg_printf("%p -> ", (void *)(temp));
 
                 if (find_sizeClass(get_size(temp)) != i) {
@@ -908,9 +861,9 @@ bool mm_checkheap(int line) {
             }
         } else {
             while (temp != NULL && get_size(temp) > 0) {
-                // seg_count += 1;
+                seg_count += 1;
 
-                if (find_sizeClass(get_size(temp)) != 4) {
+                if (find_sizeClass(get_size(temp)) != first_bin_size_boundary) {
                     dbg_printf("block not in right bin size %d)", line);
                     return false;
                 }
@@ -938,20 +891,28 @@ bool mm_checkheap(int line) {
         // dbg_printf("\n");
     }
     // dbg_printf("\n");
-    // if (seg_count != heap_count) {
-    //     dbg_printf("free block nums not consistent %d)", line);
-    //     return false;
-    // }
+    if (seg_count != heap_count) {
+        dbg_printf("free block nums not consistent %d)", line);
+        return false;
+    }
 
-    // dbg_printf("segregated list free blocks: %d\n", seg_count);
     dbg_requires(segregated_lists[0] == NULL && "sth in seg list");
 
     // check epilogue
     return true;
 }
 
-// LIFO
-// https://www.geeksforgeeks.org/introduction-and-insertion-in-a-doubly-linked-list/
+/**
+ * @brief
+ * 
+ * Push the block to the head of the seg list / mini list
+ * 
+ * source: 
+ * https://www.geeksforgeeks.org/introduction-and-insertion-in-a-doubly-linked-list/
+
+ * @param[in] The new block to be inserted into the seg / mini list 
+ * @return
+ */
 static void push(block_t *new_block) {
     dbg_requires(!get_alloc(new_block) && "Pushed allocated block to LL");
 
@@ -967,15 +928,15 @@ static void push(block_t *new_block) {
         // }
         // dbg_printf("\n");
 
-        // 3. Make next of new node as head and previous as NULL
+        // 1. Make next of new node as head and previous as NULL
         new_block->content.address.next = segregated_lists[size_class];
         new_block->content.address.prev = NULL;
 
-        // 4. change prev of head node to new node
+        // 2. change prev of head node to new node
         if (segregated_lists[size_class] != NULL)
             segregated_lists[size_class]->content.address.prev = new_block;
 
-        // 5. move the head to point to the new node
+        // 3. move the head to point to the new node
         segregated_lists[size_class] = new_block;
 
         // temp = segregated_lists[size_class];
@@ -987,14 +948,6 @@ static void push(block_t *new_block) {
         // dbg_printf("\n");
     
     } else {
-        // 3. Make next of new node as head
-        // if (!segregated_lists[size_class]) {
-        //     segregated_lists[size_class] = new_block;
-        //     new_block->content.address.next = NULL;
-        // } else {
-        //     new_block->content.address.next = segregated_lists[size_class];
-        //     segregated_lists[size_class] = new_block;
-        // }
 
         // block_t *temp = mini_list;
         // dbg_printf("mini list before push \n");
@@ -1022,8 +975,17 @@ static void push(block_t *new_block) {
     }
 }
 
-// Delete a node from the doubly linked list
-// https://www.geeksforgeeks.org/delete-a-node-in-a-doubly-linked-list/
+/**
+ * @brief
+ *
+ * Delete the block in the seg list / mini list
+ *
+ * source: 
+ * https://www.geeksforgeeks.org/delete-a-node-in-a-doubly-linked-list/
+ * 
+ * @param[in] The new block to be deleted from the seg / mini list
+ * @return
+ */
 static void delete (block_t *del_block) {
     // Ensure preconditions are met
     size_t asize = get_size(del_block);
@@ -1072,24 +1034,6 @@ static void delete (block_t *del_block) {
         // dbg_printf("\n");
 
     } else {
-        // Mini block (block->header = prev, block->content.address.prev = next)
-        // block_t *nextBlock = del_block->content.address.next;
-
-        // if (segregated_lists[size_class] == del_block) {
-        //     if (nextBlock != NULL) {
-        //         segregated_lists[size_class] = nextBlock;
-        //     } else {
-        //         segregated_lists[size_class] = NULL;
-        //     }
-        // } else {
-        //     block_t *temp = segregated_lists[size_class];
-        //     while (temp->content.address.next != del_block) {
-        //         temp = temp->content.address.next;
-        //     }
-        //     temp->content.address.next = del_block->content.address.next;
-        // }
-
-        // del_block->content.address.next = NULL;
 
         // block_t *temp = mini_list;
         // dbg_printf("mini list before delete\n");
@@ -1125,13 +1069,11 @@ static void delete (block_t *del_block) {
     }
 
 }
+
 /**
  * @brief
  *
- * <What does this function do?>
- * <What are the function's arguments?>
- * <What is the function's return value?>
- * <Are there any preconditions or postconditions?>
+ * Init the heap 
  *
  * @return
  */
@@ -1142,12 +1084,6 @@ bool mm_init(void) {
     if (start == (void *)-1) {
         return false;
     }
-
-    /*
-     * TODO: delete or replace this comment once you've thought about it.
-     * Think about why we need a heap prologue and epilogue. Why do
-     * they correspond to a block footer and header respectively?
-     */
 
     start[0] = pack(0, true, false, false); // Heap prologue (block footer)
     start[1] = pack(0, true, true, false); // Heap epilogue (block header)
@@ -1173,10 +1109,7 @@ bool mm_init(void) {
 /**
  * @brief
  *
- * <What does this function do?>
- * <What are the function's arguments?>
- * <What is the function's return value?>
- * <Are there any preconditions or postconditions?>
+ * Find a free block on the heap and write the value to the empty block
  *
  * @param[in] size
  * @return
@@ -1248,10 +1181,7 @@ void *malloc(size_t size) {
 /**
  * @brief
  *
- * <What does this function do?>
- * <What are the function's arguments?>
- * <What is the function's return value?>
- * <Are there any preconditions or postconditions?>
+ * Mark the allocated block to free
  *
  * @param[in] bp
  */
@@ -1275,19 +1205,13 @@ void free(void *bp) {
     // Try to coalesce the block with its neighbors
     coalesce_block(block);
 
-    // The current block will be freed, so set the pre_alloc of the next block
-    // to false update_next_block_bits(block);
-
     dbg_ensures(mm_checkheap(__LINE__));
 }
 
 /**
  * @brief
  *
- * <What does this function do?>
- * <What are the function's arguments?>
- * <What is the function's return value?>
- * <Are there any preconditions or postconditions?>
+ * Copy the original contents into the new block, and free the old block
  *
  * @param[in] ptr
  * @param[in] size
@@ -1333,10 +1257,7 @@ void *realloc(void *ptr, size_t size) {
 /**
  * @brief
  *
- * <What does this function do?>
- * <What are the function's arguments?>
- * <What is the function's return value?>
- * <Are there any preconditions or postconditions?>
+ * Allocates a block and sets its content to 0
  *
  * @param[in] elements
  * @param[in] size
